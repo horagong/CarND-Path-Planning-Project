@@ -351,8 +351,8 @@ vector<JMT> Vehicle::get_kinematics(map<int, vector<Vehicle>> predictions, int l
 
 		bool slow_start = false;
 		if (v0_s <= 15 && v_s > 15) {
-			v_s = v0_s + 0.005;
-			s = s0 + v_s * Ts;
+			v_s = v0_s + 0.003;
+			s = s0 + v_s * Timestep;
 			slow_start = true;
 		}
 		JMT jmt_s = JMT({s0, v0_s, a0_s}
