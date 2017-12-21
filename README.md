@@ -1,6 +1,169 @@
 # CarND-Path-Planning-Project
 Self-Driving Car Engineer Nanodegree Program
+---
+
+# Reflection
+
+## how to generate paths.
+
+### the simulator
+
+The code is run with the simulator. The simulator reads the list of path waypoints and moves the ego car according to the points every 0.02s and then returns the previous waypoints left and the current ego car states. The tricky point is that some waypoints in the previous path are comsumed even when the onMessage in the main code is running. So I need to use the previous waypoints and predict the path from the returned ego car state plus some timesteps. This comsumed timesteps was one to five waypoints. I decided to safely predict the path from the last waypoints in the previous path.
+
+```
+for (j = 0; j < path_size; j++)
+{
+    //cout << "[" << previous_path[j].s << ", " << previous_path[j].d << "<" << previous_path[j].intended_lane << ">, " 
+    //            << previous_path[j].v << ", " << previous_path[j].a << ", theta=" 
+    //            << previous_path[j].theta << ", psi=" << previous_path[j].psi << ", delta=" << previous_path[j].delta << "], ";
+
+    next_x_vals.push_back(previous_path_x[j]);
+    next_y_vals.push_back(previous_path_y[j]);
+
+    spline_x.push_back(previous_path_x[j]);
+    spline_y.push_back(previous_path_y[j]);
+}
+```          
+
+### coordinate
+
+![map](./CarND-Path-Planning-Project/map.png)
+The returned waypoints are in previous_path_x and previous_path_y. It will be better to preserve more states so defined previous_path which is vector<Vehicle>. Vehicle has s and d in Frenet coordinate and v, total velocity and a, total acceleration of the car. The angle of x and y is theta and that of s and d is psi and the angle of x axis and d vector is delta. 
+
+```
+for(int i = 1; i <= horizon - path_size; i++)
+{
+      traj[i].psi = atan2((traj[i].s - traj[i - 1].s), (traj[i].d - traj[i - 1].d));
+      if (traj[i].s > Max_S) {
+        traj[i].s -= Max_S;
+      }
+
+      way_s = traj[i].s;
+      way_d = traj[i].d;
+      xy = getXY(way_s, way_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+
+      traj[i].x = xy[0];
+      traj[i].y = xy[1];
+      auto cw = ClosestWaypoint(xy[0], xy[1], map_waypoints_x, map_waypoints_y);
+      double delta = atan2(map_waypoints_dy[cw], map_waypoints_dx[cw]);
+      traj[i].theta = atan2((traj[i].y - traj[i - 1].y), (traj[i].x - traj[i - 1].x));
+      traj[i].delta = delta;
+      //cout << "[" << way_s << ", " << way_d << ", theta=" << traj[i].theta << ", psi=" 
+      //    << traj[i].psi << ", delta=" << traj[i].delta << "(" << cw << ")], ";
+
+      spline_x.push_back(traj[i].x);
+      spline_y.push_back(traj[i].y);
+}
+
+```
+
+The generated paths of the prediction model are in Frenet coordinates because it depends on d, lane position. But the simulator reads way points in Cartesian coordinates so I need to convert s and d to x and y. The s and d in the Frenet coordinates are in the linear segments approximating the x and y road. The converted x and y from the s and d, therefore, has the rapid change of the angle in each node connecting the linear segments and it produce the large value of  acceleration and jerk even thought you generated constrained s and d waypoints.
+
+It need to be smoothy to be content with max acceleration and jerk constraints. I used two spline, timestep to s and timestep to d because the spline library only accept monotonically increasing dependent variable.
+
+```
+spline_t = {0
+      , 1
+      , (double)(spline_y.size() - 1)};
+spline_x2 = {spline_x[0]
+      , spline_x[1]
+      , spline_x[spline_x.size()-1]};
+spline_y2 = {spline_y[0]
+      , spline_y[1]
+      , spline_y[spline_y.size()-1]};
+
+sx.set_points(spline_t, spline_x2);
+sy.set_points(spline_t, spline_y2);
+```
+
+
+### prediction
+The state of ego car and other vehicles should be predicted for path generation. It is assumed that they have a constant acceleration and predicted from Vehicle::state_in() and Road::populate_traffic() and sensor fusion data.
+```
+vector<double> Vehicle::state_in(double t) const {
+  double s = this->s + this->v*t + 1/2*this->a*t*t;
+  double v = this->v + this->a*t;
+  double a = this->a;
+  return {s, v, a};
+}
+```
+
+### behavior planning
+The state machine has the states of {KL, PLCR, PLCL, LCR, LCL}. I designed to generate paths of each states and choose the path with the lowest cost and transition according to the state of the path. If it tries to do lane change actions in a timestep in some curved lane, it will produce large acceleration and jerk beyond the constrains. It can conduct the lane change through several timesteps, the state machine have LCL to LCL, and LCR to LCR also. "if (this->intended_lane != this->lane)" means it is in the middle of the lane change. intended_lane is set to +/-1 with lane number only when it starts lane changing.
+```
+} else if (state.compare("LCR") == 0) {
+
+  if (this->lane == lanes_available - 1)
+    states.push_back("KL");
+  else {
+
+    if (this->intended_lane != this->lane)
+      states.push_back("LCR");
+    else {
+      states.push_back("KL");
+    }
+  }
+}
+``` 
+
+I tried several cost functions but the buffer_cost function is enough to the project. It compares the current lane's buffer lenght to the intended lane's.
+
+
+### trajectory generation
+At each timestep, it predicts the position, velocity and acceleration of the ego car and the other vehicles and generates suitable trajectories of each states from state machine avoiding collision. Finally it choose the lowerest trajectory of them. The hardest problem was generating s and d values satisfying constraints. I think it will be easier if you choose some increment value of position and advance the ego car and comparing the calculated velocity and acceleration with the constraints. But I tried to do JMT method. It garentees that it makes the path jerk minimized but it is hard to contrain the jerk to some value. I used this value for jmt_s = JMT({s0, v0_s, a0_s}, {s, v_s, a_s}, Ts)
+
+```
+    double Ts = Timestep*horizon;
+    double s0 = this->s;
+    double v0_s = this->v*sin(this->psi);
+    double a0_s = this->a*sin(this->psi);
+
+    double v_s = this->target_speed*sin(this->psi);
+    double s = s0 + v0_s * Ts;
+    double a_s = a0_s;
+```
+It was good except at the start time. It gave max acceleration or max jerk error at start time. I adjusted the parameter for slow start.
+
+```
+    bool slow_start = false;
+    if (v0_s <= 15 && v_s > 15) {
+      v_s = v0_s + 0.005;
+      s = s0 + v_s * Ts;
+      slow_start = true;
+    }
+```
+
+I used the following code for jmt_d = JMT({d0, v0_d, a0_d}, {d, v_d, a_d}, Td). When it starts, the psi value is not well defined. The wrong psi value makes the car trun. So I fixed it at the start time. As I told, the lane changing actions makes max accererlation or max jerk sometimes if it is done in a timestep. So I divided it by 6 and made it done through six timesteps.
+
+```
+    double d0 = this->d;
+    double v0_d = this->v*cos(this->psi);
+    double a0_d = this->a*cos(this->psi);
+
+    double d;
+    if (fabs(this->lane - this->intended_lane) != 0) {
+      d = (lane2d(this->intended_lane) - lane2d(this->lane)) / 6 + d0;
+    } else
+      d = lane2d(this->intended_lane);
+    double v_d = v0_d; 
+    double a_d = a0_d;
+    double Td = Timestep;
+    if (slow_start) {
+      d = d0;
+    }
+```
    
+## future work
+The code made the car run without incident 19.15miles at most. It sometime fails to avoid abrupt collison. It needs to enhance JMT with constraints for adjusting speed change rapidly.
+
+
+
+
+
+
+
+
+---   
 ### Simulator.
 You can download the Term3 Simulator which contains the Path Planning Project from the [releases tab (https://github.com/udacity/self-driving-car-sim/releases).
 
