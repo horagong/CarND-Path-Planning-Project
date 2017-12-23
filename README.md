@@ -114,7 +114,7 @@ for (int i = 2; i <= 3 ; i ++) {
 
    
 ## future work
-The code made the car run without incident 19.15miles at most. It will be better to enhance available lane selection. It chooses only left and right lane of the current lane. Even busy next lane could be selected to go far free lane.
+It will be better to enhance available lane selection. It chooses only left and right lane of the current lane. Even busy next lane could be selected to go far free lane.
 
 
 
