@@ -1,6 +1,7 @@
 #include <iostream>
 #include "road.h"
 #include "vehicle.h"
+#include "constants.h"
 #include <math.h>
 #include <map>
 #include <string>
@@ -11,31 +12,26 @@ using json = nlohmann::json;
 /**
  * Initializes Road
  */
-Road::Road(double speed_limit, vector<double> lane_speeds) {
-
-		cout << "Road: ego max_acceleration=" << this->ego.max_acceleration << endl;
-
-    this->num_lanes = lane_speeds.size();
-    this->lane_speeds = lane_speeds;
-    this->speed_limit = speed_limit;
-
-		cout << " num_lanes=" << num_lanes;
-		cout << " speed_limit=" << speed_limit << endl;
+Road::Road() {
 }
 
 Road::~Road() {
 }
 
-Vehicle Road::get_ego() {
-	
-	return this->ego;
+void Road::set_map(vector<double> map_waypoints_x, vector<double> map_waypoints_y
+		, vector<double> map_waypoints_s, vector<double> map_waypoints_dx, vector<double> map_waypoints_dy) {
+	this->map_waypoints_x = map_waypoints_x;
+	this->map_waypoints_y = map_waypoints_y;
+	this->map_waypoints_s = map_waypoints_s;
+	this->map_waypoints_dx = map_waypoints_dx;
+	this->map_waypoints_dy = map_waypoints_dy;
 }
+
 
 void Road::populate_traffic(json fusion) {
 	
   map<int, Vehicle>::iterator it;
 
-	cout << "F: ";
   for (auto& element : fusion) {
 		// [ id, x, y, vx, vy, s, d]
     int vehicle_id = element[0].get<int>();
@@ -54,43 +50,40 @@ void Road::populate_traffic(json fusion) {
         Vehicle vehicle = it->second;
         vehicle.update(s, d, vx, vy);
         it->second = vehicle;
-/*
-				if (this->ego.lane == lane)
-					cout << "[" << vehicle_id << ": " << vehicle.lane << ", " << vehicle.s << "-" << this->ego.s << ", " << vehicle.v;
-*/
       } else {
         Vehicle vehicle = Vehicle(s, d, vx, vy);
         vehicles.insert(std::pair<int, Vehicle>(vehicle_id, vehicle));
-/*
-				if (this->ego.lane == lane)
-					cout << "[" << vehicle_id << "+ " << vehicle.lane << ", " << vehicle.s << "-" << this->ego.s << ", " << vehicle.v;
-*/
       }
-			if (this->ego.lane == lane)
-				cout << "], ";
     }
   }
-	cout << endl;
 
 	vehicles_added = vehicles.size();
-	//cout << " number of vehicles =" << vehicles_added << endl;
 }
 
-vector<Vehicle> Road::advance(int from, int to) {
-	
-	map<int ,vector<Vehicle> > predictions;
+bool Road::is_colliding(int lane, int path_size, double predicted_car_s, Vehicle & vehicle) {
+  bool collision = false;
 
-	map<int, Vehicle>::iterator it = this->vehicles.begin();
-	while(it != this->vehicles.end())
-	{
-			int v_id = it->first;
-			vector<Vehicle> preds = it->second.generate_predictions(v_id, this->ego, from, to);
-			predictions[v_id] = preds;
+  map<int, Vehicle>::iterator it = this->vehicles.begin();
+  while (it != this->vehicles.end() && !collision) {
 
-			it++;
-	}
+    int v_id = it->first;
+    Vehicle v = it->second;
 
-	vector<Vehicle> trajectory = this->ego.choose_next_state(predictions, to - from);
-	return trajectory;
+    if (v.lane == lane) {
+
+      double vehicle_s = v.s + ((double)path_size * Timestep * v.v);
+
+      if (((vehicle_s > predicted_car_s) && ((vehicle_s - predicted_car_s) < 30.0)) 
+						|| fabs(vehicle_s - predicted_car_s) < 15.0) {
+				vehicle = v;
+				vehicle.s = vehicle_s;
+        collision = true;
+        break;
+      }
+    }
+    it++;
+  }
+
+  return collision;
 }
 

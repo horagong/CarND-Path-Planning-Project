@@ -15,6 +15,7 @@
 #include "road.h"
 #include "constants.h"
 #include "helpers.h"
+#include "behavior.h"
 #include "spline.h"
 
 using namespace std;
@@ -39,9 +40,7 @@ string hasData(string s) {
 
 
 
-clock_t prev_time;
-int call_count;
-Road road(Speed_Limit, {Speed_Limit, Speed_Limit, Speed_Limit});
+Behavior behavior;
 
 int main() {
 
@@ -82,7 +81,8 @@ int main() {
   	map_waypoints_dy.push_back(d_y);
   }
 
-	road.ego.configure({Speed_Limit, Num_Lanes, 0, 0, Max_Acceleration});
+
+	behavior.road.set_map(map_waypoints_x, map_waypoints_y, map_waypoints_s, map_waypoints_dx, map_waypoints_dy);
 
   h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
@@ -131,169 +131,116 @@ int main() {
 						double car_v = mph2mps(car_speed);
 						double car_theta = deg2rad(car_yaw);
 
-						static double prev_v = 0;
-						double car_a = (car_v - prev_v) / Timestep;
-						if (car_a < -Max_Acceleration) 
-							car_a = -Max_Acceleration;
-						else if (car_a > Max_Acceleration)
-							car_a = Max_Acceleration;
-						prev_v = car_v;
-
-
-						static vector<Vehicle> previous_path;
-            int path_size = previous_path_x.size();
-						if (path_size == 0)
-							cout << "NO PREV QUEUE......................................................................" << endl;
-
-						previous_path.erase(previous_path.begin(), previous_path.begin() + previous_path.size() - path_size);
-/*
-						if (path_size >= 4)
-							path_size = 4;
-*/
-
-
-
-						cout << endl << "P:U:" << call_count << " [" << car_s << ", " << car_d << ", " << car_v << ", " << car_a 
-									<< "], (theta=" << car_theta << ")" << endl;
-
-						vector<double> spline_x;
-						vector<double> spline_y;
-						int j = 0;
-						//cout << "P: ";
-            for (j = 0; j < path_size; j++)
-            {
-								//cout << "[" << previous_path[j].s << ", " << previous_path[j].d << "<" << previous_path[j].intended_lane << ">, " 
-								//						<< previous_path[j].v << ", " << previous_path[j].a << ", theta=" 
-								//						<< previous_path[j].theta << ", psi=" << previous_path[j].psi << ", delta=" << previous_path[j].delta << "], ";
-
-								next_x_vals.push_back(previous_path_x[j]);
-								next_y_vals.push_back(previous_path_y[j]);
-
-								spline_x.push_back(previous_path_x[j]);
-								spline_y.push_back(previous_path_y[j]);
-            }
-						cout << endl;
-
-
-
+						int prev_size = previous_path_x.size();
+						behavior.road.ego.update(car_x, car_y, car_s, car_d, car_theta, car_v);
+						behavior.road.populate_traffic(sensor_fusion);
 						int horizon = 50;
-						road.populate_traffic(sensor_fusion);
+						if (prev_size == 0)
+							end_path_s = car_s;
+						behavior.plan_path(prev_size, end_path_s);
 
-						int cw;
-						int nw;
-						Vehicle end_path;
-						if (path_size == 0) {
-							end_path.s = car_s;
-							end_path.d = car_d;
-							end_path.lane = d2lane(car_d);
-							end_path.intended_lane = d2lane(car_d);
-							end_path.x = car_x;
-							end_path.y = car_y;
-							end_path.v = car_v;
-							end_path.a = car_a;
-							end_path.state = "KL";
-							end_path.theta = car_theta;
-							cw = ClosestWaypoint(car_x, car_y, map_waypoints_x, map_waypoints_y);
-							end_path.psi = car_theta - atan2(map_waypoints_dy[cw], map_waypoints_dx[cw]);
-						} else
-							end_path = previous_path[path_size - 1];
+						double ref_x;
+						double ref_y;
+						double ref_x_prev;
+						double ref_y_prev;
+						double ref_theta;
 
+						vector<double> ptsx;
+						vector<double> ptsy;
 
-						road.ego = end_path;
-						cw = ClosestWaypoint(road.ego.x, road.ego.y, map_waypoints_x, map_waypoints_y);
-						nw = NextWaypoint(road.ego.x, road.ego.y, road.ego.theta, map_waypoints_x, map_waypoints_y);
-						road.ego.goal_lane = 1; 
-						road.ego.goal_s = map_waypoints_s[nw + 2];
-						if ((nw + 2)== 0) {
-							road.ego.goal_s = Max_S;
+						if (prev_size < 4) {
+							ref_x = car_x;
+							ref_y = car_y;
+
+							ref_theta = car_theta;
+							ref_x_prev = ref_x - cos(ref_theta);
+							ref_y_prev = ref_y - sin(ref_theta);
+
+							ptsx.push_back(ref_x_prev);
+							ptsx.push_back(ref_x);
+
+							ptsy.push_back(ref_y_prev);
+							ptsy.push_back(ref_y);
+						} else {
+							
+							ref_x = previous_path_x[prev_size-2];
+							ref_y = previous_path_y[prev_size-2];
+
+							ref_x_prev = previous_path_x[prev_size-3];
+							ref_y_prev = previous_path_y[prev_size-3];
+
+							ref_theta =  atan2(ref_y - ref_y_prev, ref_x - ref_x_prev);
+
+							ptsx.push_back(ref_x_prev);
+							ptsx.push_back(ref_x);
+
+							ptsy.push_back(ref_y_prev);
+							ptsy.push_back(ref_y);
+
+							ref_x = previous_path_x[prev_size-1];
+							ref_y = previous_path_y[prev_size-1];
+							ptsx.push_back(ref_x);
+							ptsy.push_back(ref_y);
 						}
 
 
-            vector<Vehicle> traj = road.advance(path_size, horizon);
-
-						cout << "P:J:" << call_count << " " << traj[0].state 
-										<< " [" << traj[0].s << ", " << traj[0].d << "<" << traj[0].intended_lane << ">, " << traj[0].v << ", " << traj[0].a 
-										<< "] -> " << traj[1].state << " [" 
-										<< traj[1].s << ", " << traj[1].d << "<" << traj[1].intended_lane << ">, " << traj[1].v << ", " << traj[1].a << "]"
-										//<< "... [theta=" << traj[0].theta << ", psi=" << traj[0].psi << ", delta=" << traj[0].delta 
-										//<< "] -> [" << traj[1].theta << ", " << traj[1].psi << ", " << traj[1].delta << "]" 
-										<< endl;
-
-
-            double t = 0;
-
-						vector<double> xy;
-						double way_s;
-						double way_d;
-						cout << "P:N:" << call_count << " ";
-						for(int i = 1; i <= horizon - path_size; i++)
-						{
-									traj[i].psi = atan2((traj[i].s - traj[i - 1].s), (traj[i].d - traj[i - 1].d));
-									if (traj[i].s > Max_S) {
-										traj[i].s -= Max_S;
-									}
-
-									way_s = traj[i].s;
-									way_d = traj[i].d;
-									xy = getXY(way_s, way_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-
-									traj[i].x = xy[0];
-									traj[i].y = xy[1];
-									auto cw = ClosestWaypoint(xy[0], xy[1], map_waypoints_x, map_waypoints_y);
-									double delta = atan2(map_waypoints_dy[cw], map_waypoints_dx[cw]);
-									traj[i].theta = atan2((traj[i].y - traj[i - 1].y), (traj[i].x - traj[i - 1].x));
-									traj[i].delta = delta;
-									//cout << "[" << way_s << ", " << way_d << ", theta=" << traj[i].theta << ", psi=" 
-									//		<< traj[i].psi << ", delta=" << traj[i].delta << "(" << cw << ")], ";
-
-									spline_x.push_back(traj[i].x);
-									spline_y.push_back(traj[i].y);
+						for (int i = 2; i <= 3 ; i ++) {
+							vector<double> next_point = getXY(car_s + 30 * i
+																								, lane2d(behavior.lane)
+												, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+							ptsx.push_back(next_point[0]);
+							ptsy.push_back(next_point[1]);
 						}
 
-						tk::spline sx;
-						tk::spline sy;
-						vector<double> spline_t;
-						vector<double> spline_x2;
-						vector<double> spline_y2;
+					 	for (int i = 0; i < ptsx.size(); i++) {
+							double shift_x = ptsx[i] - ref_x;
+							double shift_y = ptsy[i] - ref_y;
 
-
-
-						spline_t = {0
-									, 1
-									, (double)(spline_y.size() - 1)};
-						spline_x2 = {spline_x[0]
-									, spline_x[1]
-									, spline_x[spline_x.size()-1]};
-						spline_y2 = {spline_y[0]
-									, spline_y[1]
-									, spline_y[spline_y.size()-1]};
-
-						sx.set_points(spline_t, spline_x2);
-						sy.set_points(spline_t, spline_y2);
-						for (int i = 0; i < path_size; i++) {
-							double x = sx(i); //s(x);
-							double y = sy(i); //s(x);
-
-									previous_path[i].x = x;
-									previous_path[i].y = y;
-									next_x_vals[i] = x;
-									next_y_vals[i] = y;
+							ptsx[i] = (shift_x * cos(0-ref_theta) - shift_y * sin(0-ref_theta));
+							ptsy[i] = (shift_x * sin(0-ref_theta) + shift_y * cos(0-ref_theta));
 						}
-						for (int i = 1; i <= horizon - path_size; i++) {
-							traj[i].x = sx(path_size - 1 + i); //s(x);
-							traj[i].y = sy(path_size - 1 + i); //s(x);
-									previous_path.push_back(traj[i]);
-									next_x_vals.push_back(traj[i].x);
-									next_y_vals.push_back(traj[i].y);
+
+
+						for (int i = 0; i < prev_size; i++){
+							next_x_vals.push_back(previous_path_x[i]);
+							next_y_vals.push_back(previous_path_y[i]);
 						}
-						path_size = next_x_vals.size();
-						if (path_size == 0)
-							cout << "NO QUEUE......................................................................" << endl;
 
+						tk::spline s;
+						s.set_points(ptsx, ptsy);
 
+						double target_x = 30.0;
+						double target_y = s(target_x);
+						double target_dist = sqrt((target_x*target_x)+(target_y*target_y));
 
-						call_count++;
-						cout << endl;
+						double x_add_on = 0;
+
+						double v_increment = (behavior.target_speed - car_v)/(horizon - prev_size);
+						double v = car_v + v_increment;
+						for (int i = 0; i < horizon - prev_size; i++) {
+
+							double N = (target_dist/(Timestep * v));
+							double x_point = x_add_on + (target_x)/N;
+							double y_point = s(x_point);
+
+							x_add_on = x_point;
+
+							double x_ref = x_point;
+							double y_ref = y_point;
+
+							x_point = (x_ref * cos(ref_theta) - y_ref * sin(ref_theta));
+							y_point = (x_ref * sin(ref_theta) + y_ref * cos(ref_theta));
+
+							x_point += ref_x;
+							y_point += ref_y;
+
+							next_x_vals.push_back(x_point);
+							next_y_vals.push_back(y_point);
+
+							v += v_increment;
+							if (v > Speed_Limit)
+								v = Speed_Limit;
+						}
 
           	msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;

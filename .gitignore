@@ -1,3 +1,7 @@
 *.pdf
 *.ipynb
 build
+Polynomial_Trajectory
+Quiz_Behavior_Planner
+Quiz_Hybrid_A_star
+Quiz_Naive_Bayes

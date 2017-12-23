@@ -1,3 +1,6 @@
+#ifndef ROAD_H
+#define ROAD_H
+
 #include <iostream>
 #include <random>
 #include <sstream>
@@ -18,44 +21,34 @@ using json = nlohmann::json;
 class Road {
 public:
 
-		// These affect the visualization
-		int FRAMES_PER_SECOND = 4;
-		int AMOUNT_OF_ROAD_VISIBLE = 40;
-		int update_width = 70;
-  	string ego_rep = " *** ";
-
-
-  	int num_lanes;
-		//all traffic in lane (besides ego) follow these speeds
-    vector<double> lane_speeds;
-    double speed_limit;
     map<int, Vehicle> vehicles;
     int vehicles_added = 0;
-
-  	int ego_key = -1;
 		Vehicle ego;
+
+		vector<double> map_waypoints_x;
+		vector<double> map_waypoints_y;
+		vector<double> map_waypoints_s;
+		vector<double> map_waypoints_dx;
+		vector<double> map_waypoints_dy;
 
     /**
   	* Constructor
   	*/
-  	Road(double speed_limit, vector<double> lane_speeds);
+		Road();
 
   	/**
   	* Destructor
   	*/
   	virtual ~Road();
 
-  	Vehicle get_ego();
 
+		void set_map(vector<double> map_waypoints_x, vector<double> map_waypoints_y
+				, vector<double> map_waypoints_s, vector<double> map_waypoints_dx, vector<double> map_waypoints_dy);
   	void populate_traffic(json fusion);
 
+
+		bool is_colliding(int lane, int path_size, double end_path_s, Vehicle & vehicle);
   	vector<Vehicle> advance(int from, int to);
-
-  	void display(int timestep);
-
-  	//void add_ego(int lane_num, int s, vector<int> config_data);
-
-  	void cull();
-
 };
 
+#endif
